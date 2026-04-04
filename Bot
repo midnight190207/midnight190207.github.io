@@ -1,0 +1,121 @@
+import requests
+import time
+from datetime import datetime
+import pytz
+
+BOT_TOKEN = "7821888196:AAHHA0v4-LDq8pMC_afmBxbhKAtgWH8WmGU"
+CHAT_ID = "7033612464"
+API_KEY = "ab5ce99301c94fd69a245d551b67788a"
+
+# ===== TELEGRAM =====
+def send_message(text):
+    url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
+    requests.get(url, params={"chat_id": CHAT_ID, "text": text})
+
+def get_updates(offset=None):
+    url = f"https://api.telegram.org/bot{BOT_TOKEN}/getUpdates"
+    return requests.get(url, params={"timeout": 100, "offset": offset}).json()
+
+# ===== DATA =====
+def get_data(symbol):
+    url = f"https://api.twelvedata.com/time_series?symbol={symbol}&interval=15min&outputsize=50&apikey={API_KEY}"
+    return requests.get(url).json().get("values", [])
+
+# ===== SESSION =====
+def session():
+    hour = datetime.now(pytz.timezone("Asia/Kolkata")).hour
+    if 12 <= hour <= 16: return "London"
+    if 17 <= hour <= 22: return "New York"
+    return "Dead"
+
+# ===== ADVANCED CHART READING =====
+def analyze(data):
+    highs = [float(c['high']) for c in data[:20]]
+    lows = [float(c['low']) for c in data[:20]]
+    closes = [float(c['close']) for c in data[:10]]
+
+    # Trend (stronger)
+    if highs[0] > max(highs[5:]) and lows[0] > max(lows[5:]):
+        trend = "Strong Bullish"
+    elif highs[0] < min(highs[5:]) and lows[0] < min(lows[5:]):
+        trend = "Strong Bearish"
+    else:
+        trend = "Weak/Range"
+
+    # Momentum
+    momentum = "Flat"
+    if closes[0] > sum(closes)/len(closes):
+        momentum = "Bullish Pressure"
+    elif closes[0] < sum(closes)/len(closes):
+        momentum = "Bearish Pressure"
+
+    # Liquidity
+    r, p = data[0], data[1]
+    liquidity = "None"
+    if float(r['low']) < float(p['low']) and float(r['close']) > float(p['low']):
+        liquidity = "Liquidity Grab Up"
+    elif float(r['high']) > float(p['high']) and float(r['close']) < float(p['high']):
+        liquidity = "Liquidity Grab Down"
+
+    return trend, momentum, liquidity
+
+# ===== DECISION =====
+def decide(trend, momentum, liquidity, sess):
+    if sess == "Dead":
+        return "NO TRADE"
+
+    score = 0
+    if "Bullish" in trend: score += 2
+    if "Bearish" in trend: score -= 2
+    if "Bullish" in momentum: score += 1
+    if "Bearish" in momentum: score -= 1
+    if "Up" in liquidity: score += 3
+    if "Down" in liquidity: score -= 3
+
+    if score >= 5: return "BUY"
+    if score <= -5: return "SELL"
+    return "WAIT"
+
+# ===== BUILD MESSAGE =====
+def build(symbol):
+    data = get_data(symbol)
+    if not data:
+        return f"{symbol}: No data"
+
+    trend, momentum, liquidity = analyze(data)
+    signal = decide(trend, momentum, liquidity, session())
+    price = data[0]['close']
+
+    return f"""
+📊 {symbol}
+
+Price: {price}
+Trend: {trend}
+Momentum: {momentum}
+Liquidity: {liquidity}
+
+🎯 Signal: {signal}
+"""
+
+# ===== BOT LOOP =====
+def run_bot():
+    last_update = None
+    print("Bot running...")
+
+    while True:
+        updates = get_updates(last_update)
+
+        if "result" in updates:
+            for u in updates["result"]:
+                last_update = u["update_id"] + 1
+                text = u.get("message", {}).get("text", "").lower()
+
+                if "pra" in text:
+                    msg = "🧠 MARKET UPDATE\n"
+                    msg += build("XAU/USD")
+                    msg += build("BTC/USD")
+                    send_message(msg)
+
+        time.sleep(2)
+
+run_bot()
